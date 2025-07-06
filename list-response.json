@@ -1,0 +1,7 @@
+{
+    "items": [
+        {"name": "Welder", "location": "Shelves2, shelf 2"},
+        { "name": "Impact Drive manual", "location": "Shelves1, top of" },
+        { "name": "CBR 400 petrol tap", "location": "Press 1, shelf 3" }
+    ]
+}

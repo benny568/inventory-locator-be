@@ -1,0 +1,15 @@
+{
+  "name": "inventory-locator-be",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {},
+  "dependencies": {
+    "@types/mysql": "^2.15.26",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "http": "^0.0.1-security",
+    "mysql": "^2.18.1",
+    "mysql2": "^3.12.0"
+  }
+}
