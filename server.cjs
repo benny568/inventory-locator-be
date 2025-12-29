@@ -30,6 +30,20 @@ db.connect((err) => {
     )
   `;
   
+  // Create services table if it doesn't exist
+  const createServicesTable = `
+    CREATE TABLE IF NOT EXISTS services (
+      id INT NOT NULL AUTO_INCREMENT,
+      car_id INT NOT NULL,
+      service_date DATE NOT NULL,
+      service_details TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      FOREIGN KEY (car_id) REFERENCES cars(id) ON DELETE CASCADE,
+      INDEX idx_car_id (car_id)
+    )
+  `;
+  
   db.query(createLocationsTable, (err) => {
     if (err) {
       console.error('Error creating locations table:', err);
@@ -77,6 +91,15 @@ db.connect((err) => {
           Promise.all(insertPromises)
             .then(() => console.log('Default locations inserted'))
             .catch(err => console.error('Error inserting default locations:', err));
+        }
+      });
+      
+      // Create services table
+      db.query(createServicesTable, (err) => {
+        if (err) {
+          console.error('Error creating services table:', err);
+        } else {
+          console.log('Services table ready');
         }
       });
     }
@@ -218,6 +241,123 @@ app.delete('/api/locations/:id', (req, res) => {
         return;
       }
       res.json({ message: 'Location deleted successfully' });
+    });
+  });
+});
+
+// Get all cars
+app.get('/api/cars', (req, res) => {
+  const query = 'SELECT * FROM cars ORDER BY make, model';
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching cars:', err);
+      res.status(500).json({ error: 'Failed to fetch cars' });
+      return;
+    }
+    res.json(results);
+  });
+});
+
+// Get services for a specific car
+app.get('/api/cars/:id/services', (req, res) => {
+  const { id } = req.params;
+  const query = 'SELECT * FROM services WHERE car_id = ? ORDER BY service_date DESC';
+  db.query(query, [id], (err, results) => {
+    if (err) {
+      console.error('Error fetching services:', err);
+      res.status(500).json({ error: 'Failed to fetch services' });
+      return;
+    }
+    res.json(results);
+  });
+});
+
+// Add new service for a car
+app.post('/api/cars/:id/services', (req, res) => {
+  const { id } = req.params;
+  const { service_date, service_details } = req.body;
+  
+  console.log('POST /api/cars/:id/services - Request body:', req.body);
+  console.log('Car ID:', id);
+  
+  if (!service_date || !service_details || service_details.trim() === '') {
+    return res.status(400).json({ error: 'Service date and details are required' });
+  }
+  
+  // Validate car_id is a number
+  const carId = parseInt(id);
+  if (isNaN(carId)) {
+    return res.status(400).json({ error: 'Invalid car ID' });
+  }
+  
+  // Validate date format (YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(service_date)) {
+    return res.status(400).json({ error: 'Invalid date format. Please use YYYY-MM-DD format.' });
+  }
+  
+  const query = 'INSERT INTO services (car_id, service_date, service_details) VALUES (?, ?, ?)';
+  db.query(query, [carId, service_date, service_details.trim()], (err, result) => {
+    if (err) {
+      console.error('Error adding service:', err);
+      console.error('SQL Error Code:', err.code);
+      console.error('SQL Error Message:', err.message);
+      res.status(500).json({ error: `Failed to add service: ${err.message}` });
+      return;
+    }
+    res.json({ 
+      id: result.insertId, 
+      car_id: carId, 
+      service_date, 
+      service_details: service_details.trim() 
+    });
+  });
+});
+
+// Update a service
+app.put('/api/cars/:id/services/:serviceId', (req, res) => {
+  const { id, serviceId } = req.params;
+  const { service_date, service_details } = req.body;
+  
+  console.log('PUT /api/cars/:id/services/:serviceId - Request body:', req.body);
+  console.log('Car ID:', id, 'Service ID:', serviceId);
+  
+  if (!service_date || !service_details || service_details.trim() === '') {
+    return res.status(400).json({ error: 'Service date and details are required' });
+  }
+  
+  // Validate IDs are numbers
+  const carId = parseInt(id);
+  const servId = parseInt(serviceId);
+  if (isNaN(carId) || isNaN(servId)) {
+    return res.status(400).json({ error: 'Invalid car ID or service ID' });
+  }
+  
+  // Validate date format (YYYY-MM-DD)
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(service_date)) {
+    return res.status(400).json({ error: 'Invalid date format. Please use YYYY-MM-DD format.' });
+  }
+  
+  const query = 'UPDATE services SET service_date = ?, service_details = ? WHERE id = ? AND car_id = ?';
+  db.query(query, [service_date, service_details.trim(), servId, carId], (err, result) => {
+    if (err) {
+      console.error('Error updating service:', err);
+      console.error('SQL Error Code:', err.code);
+      console.error('SQL Error Message:', err.message);
+      res.status(500).json({ error: `Failed to update service: ${err.message}` });
+      return;
+    }
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Service not found or does not belong to this car' });
+    }
+    
+    res.json({ 
+      id: servId, 
+      car_id: carId, 
+      service_date, 
+      service_details: service_details.trim() 
     });
   });
 });
