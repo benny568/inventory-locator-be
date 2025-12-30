@@ -37,6 +37,7 @@ db.connect((err) => {
       car_id INT NOT NULL,
       service_date DATE NOT NULL,
       service_details TEXT,
+      odometer INT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       FOREIGN KEY (car_id) REFERENCES cars(id) ON DELETE CASCADE,
@@ -258,6 +259,59 @@ app.get('/api/cars', (req, res) => {
   });
 });
 
+// Add new car
+app.post('/api/cars', (req, res) => {
+  const { make, model, year, color, reg, price } = req.body;
+  
+  console.log('POST /api/cars - Request body:', req.body);
+  
+  if (!make || !model || !reg) {
+    return res.status(400).json({ error: 'Make, model, and registration are required' });
+  }
+  
+  // Validate year if provided
+  let yearValue = null;
+  if (year !== undefined && year !== null && year !== '') {
+    yearValue = parseInt(year);
+    if (isNaN(yearValue) || yearValue < 1900 || yearValue > new Date().getFullYear() + 1) {
+      return res.status(400).json({ error: 'Year must be a valid number between 1900 and current year + 1' });
+    }
+  }
+  
+  // Validate price if provided
+  let priceValue = null;
+  if (price !== undefined && price !== null && price !== '') {
+    priceValue = parseFloat(price);
+    if (isNaN(priceValue) || priceValue < 0) {
+      return res.status(400).json({ error: 'Price must be a valid positive number' });
+    }
+  }
+  
+  const query = 'INSERT INTO cars (make, model, year, color, reg, price) VALUES (?, ?, ?, ?, ?, ?)';
+  db.query(query, [make.trim(), model.trim(), yearValue, color?.trim() || null, reg.trim(), priceValue], (err, result) => {
+    if (err) {
+      console.error('Error adding car:', err);
+      console.error('SQL Error Code:', err.code);
+      console.error('SQL Error Message:', err.message);
+      if (err.code === 'ER_DUP_ENTRY') {
+        res.status(400).json({ error: 'A car with this registration number already exists' });
+      } else {
+        res.status(500).json({ error: `Failed to add car: ${err.message}` });
+      }
+      return;
+    }
+    res.json({ 
+      id: result.insertId, 
+      make: make.trim(), 
+      model: model.trim(), 
+      year: yearValue, 
+      color: color?.trim() || null, 
+      reg: reg.trim(),
+      price: priceValue
+    });
+  });
+});
+
 // Get services for a specific car
 app.get('/api/cars/:id/services', (req, res) => {
   const { id } = req.params;
@@ -272,10 +326,54 @@ app.get('/api/cars/:id/services', (req, res) => {
   });
 });
 
+// Delete a car
+app.delete('/api/cars/:id', (req, res) => {
+  const { id } = req.params;
+  
+  console.log('DELETE /api/cars/:id - Car ID:', id);
+  
+  // Validate car_id is a number
+  const carId = parseInt(id);
+  if (isNaN(carId)) {
+    return res.status(400).json({ error: 'Invalid car ID' });
+  }
+  
+  // Check if car has services (optional - you might want to prevent deletion if services exist)
+  const checkServicesQuery = 'SELECT COUNT(*) as count FROM services WHERE car_id = ?';
+  db.query(checkServicesQuery, [carId], (err, results) => {
+    if (err) {
+      console.error('Error checking services:', err);
+      res.status(500).json({ error: 'Failed to check car services' });
+      return;
+    }
+    
+    // Delete the car (services will be deleted automatically due to CASCADE)
+    const deleteQuery = 'DELETE FROM cars WHERE id = ?';
+    db.query(deleteQuery, [carId], (err, result) => {
+      if (err) {
+        console.error('Error deleting car:', err);
+        console.error('SQL Error Code:', err.code);
+        console.error('SQL Error Message:', err.message);
+        res.status(500).json({ error: `Failed to delete car: ${err.message}` });
+        return;
+      }
+      
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Car not found' });
+      }
+      
+      res.json({ 
+        message: 'Car deleted successfully',
+        deletedServicesCount: results[0].count
+      });
+    });
+  });
+});
+
 // Add new service for a car
 app.post('/api/cars/:id/services', (req, res) => {
   const { id } = req.params;
-  const { service_date, service_details } = req.body;
+  const { service_date, service_details, odometer } = req.body;
   
   console.log('POST /api/cars/:id/services - Request body:', req.body);
   console.log('Car ID:', id);
@@ -296,8 +394,17 @@ app.post('/api/cars/:id/services', (req, res) => {
     return res.status(400).json({ error: 'Invalid date format. Please use YYYY-MM-DD format.' });
   }
   
-  const query = 'INSERT INTO services (car_id, service_date, service_details) VALUES (?, ?, ?)';
-  db.query(query, [carId, service_date, service_details.trim()], (err, result) => {
+  // Validate odometer if provided
+  let odometerValue = null;
+  if (odometer !== undefined && odometer !== null && odometer !== '') {
+    odometerValue = parseInt(odometer);
+    if (isNaN(odometerValue) || odometerValue < 0) {
+      return res.status(400).json({ error: 'Odometer reading must be a valid positive number' });
+    }
+  }
+  
+  const query = 'INSERT INTO services (car_id, service_date, service_details, odometer) VALUES (?, ?, ?, ?)';
+  db.query(query, [carId, service_date, service_details.trim(), odometerValue], (err, result) => {
     if (err) {
       console.error('Error adding service:', err);
       console.error('SQL Error Code:', err.code);
@@ -309,7 +416,8 @@ app.post('/api/cars/:id/services', (req, res) => {
       id: result.insertId, 
       car_id: carId, 
       service_date, 
-      service_details: service_details.trim() 
+      service_details: service_details.trim(),
+      odometer: odometerValue
     });
   });
 });
