@@ -248,12 +248,36 @@ app.delete('/api/locations/:id', (req, res) => {
 
 // Get all cars
 app.get('/api/cars', (req, res) => {
-  const query = 'SELECT * FROM cars ORDER BY make, model';
+  const query = `
+    SELECT 
+      c.id,
+      c.make,
+      c.model,
+      c.year,
+      c.color,
+      c.reg,
+      c.price,
+      MAX(s.service_date) as last_serviced
+    FROM cars c
+    LEFT JOIN services s ON s.car_id = c.id
+    GROUP BY c.id, c.make, c.model, c.year, c.color, c.reg, c.price
+    ORDER BY c.make, c.model
+  `;
   db.query(query, (err, results) => {
     if (err) {
       console.error('Error fetching cars:', err);
+      console.error('SQL Error:', err.sql);
       res.status(500).json({ error: 'Failed to fetch cars' });
       return;
+    }
+    // Log the results to debug
+    console.log('Cars fetched:', results.length);
+    if (results.length > 0) {
+      console.log('Sample car with last_serviced:', {
+        id: results[0].id,
+        make: results[0].make,
+        last_serviced: results[0].last_serviced
+      });
     }
     res.json(results);
   });
