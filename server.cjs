@@ -30,6 +30,15 @@ db.connect((err) => {
     )
   `;
   
+  // Create categories table if it doesn't exist
+  const createCategoriesTable = `
+    CREATE TABLE IF NOT EXISTS categories (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL UNIQUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+  
   // Create services table if it doesn't exist
   const createServicesTable = `
     CREATE TABLE IF NOT EXISTS services (
@@ -95,6 +104,42 @@ db.connect((err) => {
         }
       });
       
+      // Create categories table
+      db.query(createCategoriesTable, (err) => {
+        if (err) {
+          console.error('Error creating categories table:', err);
+        } else {
+          console.log('Categories table ready');
+          
+          // Add category_id column to items table if it doesn't exist
+          db.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'items' 
+            AND COLUMN_NAME = 'category_id'
+          `, (err, results) => {
+            if (err) {
+              console.error('Error checking category_id column:', err);
+            } else if (results.length === 0) {
+              // Column doesn't exist, add it
+              db.query(`
+                ALTER TABLE items 
+                ADD COLUMN category_id INT,
+                ADD CONSTRAINT fk_items_category 
+                  FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+              `, (alterErr) => {
+                if (alterErr) {
+                  console.error('Error adding category_id column:', alterErr);
+                } else {
+                  console.log('category_id column added to items table');
+                }
+              });
+            }
+          });
+        }
+      });
+      
       // Create services table
       db.query(createServicesTable, (err) => {
         if (err) {
@@ -125,7 +170,17 @@ app.use(express.json());
 // Define a route to get items
 app.get('/api/items', (req, res) => {
   // console.log('In GET handler...');
-  const query = 'SELECT * FROM items';
+  const query = `
+    SELECT 
+      i.id,
+      i.name,
+      i.location,
+      i.category_id,
+      c.name AS category
+    FROM items i
+    LEFT JOIN categories c ON i.category_id = c.id
+    ORDER BY i.id
+  `;
   db.query(query, (err, results) => {
     if (err) {
       console.error('Error fetching items:', err);
@@ -138,30 +193,68 @@ app.get('/api/items', (req, res) => {
 
 // Add new item
 app.post('/api/items', (req, res) => {
-  const { name, location } = req.body;
-  const query = 'INSERT INTO items (name, location) VALUES (?, ?)';
-  db.query(query, [name, location], (err, result) => {
+  const { name, location, category_id } = req.body;
+  const query = 'INSERT INTO items (name, location, category_id) VALUES (?, ?, ?)';
+  db.query(query, [name, location, category_id || null], (err, result) => {
     if (err) {
       console.error('Error adding item:', err);
       res.status(500).json({ error: 'Failed to add item' });
       return;
     }
-    res.json({ id: result.insertId, name, location });
+    // Fetch the created item with category name
+    const selectQuery = `
+      SELECT 
+        i.id,
+        i.name,
+        i.location,
+        i.category_id,
+        c.name AS category
+      FROM items i
+      LEFT JOIN categories c ON i.category_id = c.id
+      WHERE i.id = ?
+    `;
+    db.query(selectQuery, [result.insertId], (selectErr, selectResults) => {
+      if (selectErr) {
+        console.error('Error fetching created item:', selectErr);
+        res.json({ id: result.insertId, name, location, category_id: category_id || null });
+      } else {
+        res.json(selectResults[0]);
+      }
+    });
   });
 });
 
 // Update item
 app.put('/api/items/:id', (req, res) => {
   const { id } = req.params;
-  const { name, location } = req.body;
-  const query = 'UPDATE items SET name = ?, location = ? WHERE id = ?';
-  db.query(query, [name, location, id], (err, result) => {
+  const { name, location, category_id } = req.body;
+  const query = 'UPDATE items SET name = ?, location = ?, category_id = ? WHERE id = ?';
+  db.query(query, [name, location, category_id || null, id], (err, result) => {
     if (err) {
       console.error('Error updating item:', err);
       res.status(500).json({ error: 'Failed to update item' });
       return;
     }
-    res.json({ id, name, location });
+    // Fetch the updated item with category name
+    const selectQuery = `
+      SELECT 
+        i.id,
+        i.name,
+        i.location,
+        i.category_id,
+        c.name AS category
+      FROM items i
+      LEFT JOIN categories c ON i.category_id = c.id
+      WHERE i.id = ?
+    `;
+    db.query(selectQuery, [id], (selectErr, selectResults) => {
+      if (selectErr) {
+        console.error('Error fetching updated item:', selectErr);
+        res.json({ id, name, location, category_id: category_id || null });
+      } else {
+        res.json(selectResults[0]);
+      }
+    });
   });
 });
 
@@ -242,6 +335,71 @@ app.delete('/api/locations/:id', (req, res) => {
         return;
       }
       res.json({ message: 'Location deleted successfully' });
+    });
+  });
+});
+
+// Get all categories
+app.get('/api/categories', (req, res) => {
+  const query = 'SELECT * FROM categories ORDER BY name';
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching categories:', err);
+      res.status(500).json({ error: 'Failed to fetch categories' });
+      return;
+    }
+    res.json(results);
+  });
+});
+
+// Add new category
+app.post('/api/categories', (req, res) => {
+  const { name } = req.body;
+  if (!name || name.trim() === '') {
+    return res.status(400).json({ error: 'Category name is required' });
+  }
+  
+  const query = 'INSERT INTO categories (name) VALUES (?)';
+  db.query(query, [name.trim()], (err, result) => {
+    if (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        res.status(409).json({ error: 'Category already exists' });
+      } else {
+        console.error('Error adding category:', err);
+        res.status(500).json({ error: 'Failed to add category' });
+      }
+      return;
+    }
+    res.json({ id: result.insertId, name: name.trim() });
+  });
+});
+
+// Delete category
+app.delete('/api/categories/:id', (req, res) => {
+  const { id } = req.params;
+  
+  // Check if category exists
+  const checkQuery = 'SELECT * FROM categories WHERE id = ?';
+  db.query(checkQuery, [id], (err, results) => {
+    if (err) {
+      console.error('Error checking category:', err);
+      res.status(500).json({ error: 'Failed to check category' });
+      return;
+    }
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    
+    // Delete the category (items using it will have category_id set to NULL due to ON DELETE SET NULL)
+    const deleteQuery = 'DELETE FROM categories WHERE id = ?';
+    db.query(deleteQuery, [id], (err, result) => {
+      if (err) {
+        console.error('Error deleting category:', err);
+        res.status(500).json({ error: 'Failed to delete category' });
+        return;
+      }
+      res.json({ message: 'Category deleted successfully' });
     });
   });
 });
